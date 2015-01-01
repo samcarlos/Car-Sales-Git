@@ -1,0 +1,72 @@
+
+library(randomForest)
+library(Quandl)
+brent.crude=Quandl("DOE/RBRTE",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+sp500=Quandl("YAHOO/INDEX_GSPC",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+unemp=Quandl("FRED/UNRATE",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+fedfunds=Quandl("FRED/DFF",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+dsg10=Quandl("FRED/DGS10",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+tips10=Quandl("FRED/DFII10",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+thirtyyrMortgage=Quandl("FMAC/FIX30YR",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+libor=Quandl("FRED/USD12MD156N",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+population=Quandl("FRED/POP",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+allEmployees=Quandl("FRED/PAYEMS",start_date="2005-07-15", end_date="2014-11-15",collapse="monthly", authcode="BDZ6HWNqxdJhydmkUPh4")
+
+econ.data=cbind(brent.crude[,-1],sp500[,-1],unemp[,-1],fedfunds[,-1],dsg10[,-1],tips10[,-1]+.791,libor[,-1],population[,-1],allEmployees[,-1])
+colnames(econ.data)=gsub(" ","_",c(colnames(brent.crude)[-1],colnames(sp500)[-1],"unemp","fedfunds","dsg10","tips","libor","pop", "allemp"))
+
+econ.data=econ.data[nrow(econ.data):1,]
+
+rfVAR=function(data,max.lag){
+lag.data=lapply(data,function(x) embed(c(rep(NA,max.lag), x), max.lag+1))
+base.data=matrix(0, dim(data)[1]-max.lag, max.lag*dim(data)[2])
+for(i in 1:dim(data)[2]){
+  base.data[,((i-1)*max.lag+1):(i*max.lag)]=lag.data[[i]][-c(1:max.lag),-1]
+}
+colnames(base.data)=paste(rep(names(data),each=max.lag),rep(1:max.lag,dim(data)[2]), sep=".")
+
+rf.list=vector("list", dim(data)[2])
+for(i in 1:dim(data)[2]){
+  rf.df=cbind(data[-c(1:max.lag),i],base.data)
+  colnames(rf.df)[1]="t0"
+  assign(paste0(colnames(data)[i],".rf") ,randomForest(t0~., data=rf.df))
+  rf.list[[i]]=get(paste0(colnames(data)[i],".rf"))
+}
+names(rf.list)=colnames(data)
+return(list(rf.list=rf.list,data=data))
+}
+
+new.dat=log(cbind(data,econ.data))
+data.diff=as.data.frame(apply(log(cbind(data,econ.data)),2,diff))
+test=rfVAR(data.diff,12)
+predict.rfVAR=function(rfVAR.obj, n.predicted){
+  rf.list=rfVAR.obj$rf.list
+  data=rfVAR.obj$data
+  predictions.mat=matrix(0,n.predicted,dim(data)[2])
+  colnames(predictions.mat)=colnames(data)
+  all.data=rbind(data,predictions.mat)
+  
+  for(pred.iter in 1:n.predicted){  
+    temp.data=rep(0,max.lag*dim(data)[2])  
+    for(i in 1:dim(data)[2]){
+      temp.data[((i-1)*max.lag+1):(i*max.lag)]=all.data[(dim(data)[1]+pred.iter-1):(dim(data)[1]-max.lag+pred.iter),i]
+    }
+    names(temp.data)=paste(rep(names(data),each=max.lag),rep(1:max.lag,dim(data)[2]), sep=".")
+    
+    for(j in 1:dim(data)[2]){
+      all.data[dim(data)[1]+pred.iter,j]=predict(rf.list[[j]], newdata=t(as.data.frame(temp.data)))
+      
+    }
+  
+  }
+  
+  return(all.data[(dim(data)[1]+1):(dim(data)[1]+n.predicted),])  
+}
+
+test.predict=predict.rfVAR(test,12)
+
+predict.next.month=(1+test.predict[1,1:29])*data[nrow(data),]
+rownames(predict.next.month)=paste("Predicted Values for" ,seq(as.Date(current.month),length=2, by="1 months")[2])
+stargazer(t(predict.next.month), type="html")
+
+
